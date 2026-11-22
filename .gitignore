@@ -1,0 +1,69 @@
+# ---- Build output ----
+build/
+out/
+install/
+cmake-build-*/
+*.user
+
+# ---- CMake ----
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+_deps/
+compile_commands.json
+.ninja_deps
+.ninja_log
+build.ninja
+.ninja/
+*.ninja
+
+# ---- Compiled / binary artifacts ----
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exp
+*.pdb
+*.ilk
+*.exe
+*.out
+*.app
+*.apk
+*.aab
+*.aar
+*.jar
+
+# ---- Qt specific ----
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*.moc
+.qmlls.ini
+.qmlformat.ini
+
+# ---- IDE / editor ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.clangd/
+.cache/
+
+# ---- OS ----
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# ---- Local scratch (not part of the project) ----
+.probe/
+scratch/
+tmp/

@@ -1,0 +1,25 @@
+# Normalise line endings in the repository, so a Windows checkout and a Linux
+# checkout of the same commit contain identical bytes.
+* text=auto eol=lf
+
+# Windows-specific scripts keep CRLF.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# Binary assets are stored verbatim.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.ico   binary
+*.icns  binary
+*.ttf   binary
+*.otf   binary
+*.woff  binary
+*.woff2 binary
+*.wav   binary
+*.mp3   binary
+*.flac  binary
+
+# Keep the licence text exactly as published.
+LICENSE -text
