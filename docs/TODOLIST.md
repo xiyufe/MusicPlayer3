@@ -29,23 +29,23 @@
 | 区域 | 已完成 | 设计已定 | 未开始 | 合计 |
 | --- | --- | --- | --- | --- |
 | A 仓库骨架 | 6 | 0 | 0 | 6 |
-| B 播放与解码 | 0 | 3 | 11 | 14 |
+| B 播放与解码 | 0 | 5 | 12 | 17 |
 | C 曲库 | 0 | 8 | 4 | 12 |
 | D 播放历史与统计 | 0 | 9 | 2 | 11 |
 | E 同步与备份 | 0 | 10 | 4 | 14 |
-| F 智能播放列表（推后到 v0.4+） | 0 | 5 | 3 | 8 |
+| F 智能播放列表（推后到 v0.5+） | 0 | 5 | 3 | 8 |
 | G 歌词 | 0 | 5 | 1 | 6 |
-| H UI 与体验 | 0 | 3 | 9 | 12 |
-| **合计** | **6** | **43** | **34** | **83** |
+| H UI 与体验 | 4 | 3 | 9 | 16 |
+| **合计** | **10** | **45** | **35** | **90** |
 
-> 真正能跑的只有 A 区（仓库骨架）和 B 区的 Null 输出后端。大部分条目标 📐 表示方案已经确定到可以直接动手，但一行代码都还没写——**别把 📐 当成进度**。
+> 真正能跑的只有 A 区（仓库骨架）和 B 区的 Null 输出后端。大部分条目标 📐 表示方案已经确定到可以直接动手，但一行代码都还没写——**别把 📐 当成进度**。H 区那 4 条打勾的是**技术选型与规格定案**（选定了技术栈和视觉规格，不是写完了界面）。
 
 ---
 
 ## A. 仓库骨架
 
 - [x] **T-A01 GPL-3.0 协议文件**
-  许可证全文已放入仓库根。选 GPL-3.0 而非 MIT/Apache 的原因：要链 FFmpeg（可能启用 GPL 组件）和 Qt，GPL-3.0 与两者都兼容，并且能保证任何改进都回流。
+  许可证全文已放入仓库根。选 GPL-3.0 而非 MIT/Apache 的原因：要链 FFmpeg（可能启用 GPL 组件）和 Qt，GPL-3.0 与两者都兼容，并且能保证任何改进都回流。第三方库的许可证矩阵见 [DEPENDENCIES.md](DEPENDENCIES.md) §5。
 
 - [x] **T-A02 `.gitignore` / `.gitattributes`**
   `.gitattributes` 统一 `eol=lf`，避免 Windows 上改一行显示整文件变更。
@@ -81,7 +81,7 @@
   依赖：FFmpeg 开发库（未安装）。
 
 - [ ] **T-B05 WASAPI 输出后端（共享模式）**
-  Windows 第一版够用。独占模式（位精确）留到 v0.4。
+  Windows 第一版够用。独占模式留到 v0.5。**独占不等于位精确**，两者是两个档（见 T-B15）。
 
 - [ ] **T-B06 音频文件格式支持**
   已列出 21 种扩展名：mp3/flac/ogg/oga/opus/m4a/mp4/aac/wav/aiff/aif/ape/wv/wma/dsf/dff/mka/m4b/caf/w64/tta。实际能播几种取决于 FFmpeg 编译配置。
@@ -102,13 +102,44 @@
   音量、播放模式、窗口布局。
 
 - [ ] **T-B12 gapless 播放（预解码下一首）**
-  v0.4。
+  v0.5。
 
 - [ ] **T-B13 交叉淡化 0–12 秒可调**
-  v0.4。
+  v0.5。
 
 - [ ] **T-B14 10 段图形均衡器 + 预设**
-  v0.4。
+  v0.5。
+
+- [ ] 📐 **T-B15 输出模式三档：`Shared` / `Exclusive` / `BitPerfect`**
+  `OutputMode` 枚举已扩成三个值（`core/include/mp3/audio_output.h`）。三档的分界线不是"谁更强"，而是**承诺什么**：
+
+  | 档 | 拿到什么 | 没承诺什么 |
+  | --- | --- | --- |
+  | `Shared` | 一定成功，能和其他 App 同时出声 | OS 可任意重采样、加效果、过音量 |
+  | `Exclusive` | 独占设备（别人抢不走，也抢不走别人） | **不保证位精确**——驱动内部仍可能转换，系统音量仍可能挂在路径上 |
+  | `BitPerfect` | 独占 + 承诺样本不被改动：不加软件音量、不重采样、流格式必须等于设备原生格式 | 不承诺一定成功 |
+
+  **`BitPerfect` 协商失败必须报错，不能静默降级。** 静默降级比不支持更糟：用户以为在听直通，实际 OS 在偷偷重采样，而且他永远不会知道。这条是 `open()` 契约，写进了头文件注释。
+
+  **设置项**：`audio.output_mode`（枚举，默认 `Shared`，scope `device`）。必须是 `device` 作用域——PC 上的独占设置推到手机上毫无意义（设备名都不一样），而且会导致手机端打不开设备直接哑掉。
+
+- [ ] 📐 **T-B16 不同采样率连播：每次采样率变化就重开流（方案 A）**
+  曲目 44.1k → 96k 连播时，两种做法：①重开设备流到新采样率；②把所有曲目重采样到固定率。**定案①**，理由是采样率直接决定听到什么，而重开的代价只是一次短促的断点。
+
+  **这条只在 `Exclusive` / `BitPerfect` 下有意义。** `Shared` 模式下流格式就是 OS 混音格式（Windows 通常是 48k 固定），重开只是把同一件事再做一遍，所以共享模式始终一条流、由 OS 重采样。
+
+  **必须写明的两个后果**：
+  1. **采样率变化的边界处不可能 gapless，也不可能交叉淡化。** 同一采样率的相邻曲目两者都照常工作（T-B12/T-B13 不受影响）；跨采样率的边界就是一段几百毫秒的静默。这是有意接受的代价，不是 bug。
+  2. 重开流期间必须保证不出现爆音：先 `stop()`，`close()`，`open()` 新格式，`start()`，全程由解码线程预填缓冲区，不能让声卡回调拿到半截数据。
+
+- [ ] **T-B17 Android USB DAC 位精确直通（「遥遥无期」档）**
+  不是 v0.x 的事，只是记在案。Android 14+ 有 `setPreferredMixerAttributes()` + `MIXER_BEHAVIOR_BIT_PERFECT`，但：
+
+  - 它是**可选设备特性**，厂商要在 `usb_audio_policy_configuration.xml` 的动态 mix port 上挂 `AUDIO_OUTPUT_FLAG_BIT_PERFECT`，绝大多数手机没有。
+  - 该模式下**框架不提供软件音量**，音量必须由硬件控制，UI 得跟着改。
+  - 实测连锁：Pixel 9 Pro XL（Android 17）上 YouTube Music 恒走 48k 混音器、Apple Music 到 192k 但 `BitPerfect=false`、Tidal 直接是 16 位 AudioTrack。Google issue tracker 上报告者的原话是 "It's purely an adoption problem."
+
+  **结论**：Android 只承诺"尽力提升"——默认走 AAudio 原生采样率，能试 bit-perfect 就试，失败静默回落到 `Shared`（这一处允许回落，因为它本来就是尽力而为，与我们自己的 `BitPerfect` 档契约不矛盾）。DSD 在 Android 上只能走 DoP，原生 DSD 不做。
 
 ---
 
@@ -594,7 +625,7 @@
 
 ---
 
-## F. 智能播放列表（**实现推后到 v0.4+**）
+## F. 智能播放列表（**实现推后到 v0.5+**）
 
 > **整个 F 区的设计保留，但实现排在最后。** 产品上不追求这个功能，先按"能听 → 好听"走完 v0.1–v0.3。保留设计的两个理由：①表结构已经为它准备好了（`playlists.kind` + `smart_query` 两列），现在删掉将来加回来还要改表；②它是数据模型的测压点——`play_stats` 的跨设备聚合、`track_ratings` 的 JOIN、`work_key` 的统计口径、`is_missing` 的反向映射，全都是因为要让智能列表查得对才被逼着设计对的。
 
@@ -712,8 +743,11 @@
 
 ## H. UI 与体验
 
-- [ ] 📐 **T-H01 UI 技术选型：Qt 6 Quick / QML**（🧑 你定的）
-  一份 QML 同时跑 Windows + Android；C++ 对象直接绑定 QML 属性，零 FFI 开销；Qt Quick Controls 自带 Material 风格（MD2 级），只需增量做 MD3。
+- [x] **T-H01 UI 技术选型：两端各用各的原生栈**（🧑 你定的方案 B）
+  **Windows = Qt 6 Quick / QML；Android = Kotlin + Jetpack Compose + Material 3。Core 层一份共用。**
+  为什么不是"一套 QML 跑两端"：Qt for Android 的体积是决定性因素——Qt Quick 最小 hello world 的 APK 约 27 MB、常规 App 装完约 92 MB，而 Kotlin + Compose 约 12–18 MB，**差 5–8 倍**。另外 Android 的媒体生态（通知栏、锁屏、蓝牙按键、耳机拔出、Android Auto）用 Qt 要自己写 Java 层，用 Media3 几乎白送。
+  代价写在明处：**要维护两套 UI 的一致性**（配色、间距、动效、文案、空状态）。缓解靠一份集中的设计规格 + "功能边界两端一致，不允许某功能只有一个端有"，详见 [ARCHITECTURE.md](ARCHITECTURE.md) §9。
+  完整依赖清单与许可证矩阵见 [DEPENDENCIES.md](DEPENDENCIES.md)。
 
 - [ ] 📐 **T-H02 双队列 + 插播颜色区分**（🧑 你补充的）
   `play_queue.origin` 记录来源，UI 直接读这个值决定颜色，**不需要猜**某条是不是插播：
@@ -745,12 +779,17 @@
 
 - [ ] **T-H04 UI 信息架构**
   🧑 你说"后面再仔细讨论，可以先简单写一个凑合着用"。还没写。
+  **现在可以先落地了**：四个入口的容器（手机底部导航 / 桌面左侧侧栏）与"两端同一信息架构"已由 T-H16 ② 定死，视觉规格由 T-H16 ① 定死，剩下的就是每个页面装什么内容。
 
 - [ ] **T-H05 Material Design 3 完整主题**
-  动态取色、明暗切换、tonal surface 色阶、shape scale 4/8/12/16/28。
+  配色阶、明暗切换、tonal surface 色阶、shape scale 4/8/12/16/28、字号阶梯、间距刻度、动效曲线与时长，**写成一份集中规格**（两端都从这里取，见 T-H16）。
+  **两端各一套实现**：Android 直接用 `androidx.compose.material3`；Windows 用 Qt Quick Controls 的 Material **Dense 变体**调参对齐同一份规格（见 T-H16 ①-b）。动态取色默认关闭（T-H16 ③）。
 
-- [ ] **T-H06 Android 适配**
-  Qt for Android 构建（arm64-v8a）、AAudio 输出、底部导航、后台播放、锁屏控制、SAF 访问目录、蓝牙耳机按键。
+- [ ] **T-H06 手机版 UI 布局（Android 主线，Compose）**
+  按手机屏幕先设计，不是把桌面布局塞进小屏：底部导航（库/播放/搜索/设置，Material 3 `NavigationBar`，见 T-H16 ②）、大按钮、单手可达、SafeArea 避让状态栏与手势条（Android 15 起 edge-to-edge 是强制的）、横屏与折叠屏的降级方案、列表滚动性能（Compose `LazyColumn` + `key`）。
+  **桌面版是同构变体**：同样四个入口改成左侧常驻侧栏，视觉规格与手机端一致（T-H16 ①）。
+
+  平台集成本身（AAudio、SAF、前台服务、媒体通知、蓝牙按键）不在这里，在 v0.4 的 Android 里程碑与 T-B17，理由是它们属于 App 层平台适配、跟 UI 布局是两件事，混在一条里会既看不出进度也排不出优先级。
 
 - [ ] **T-H07 频谱可视化**
 
@@ -764,10 +803,31 @@
 - [ ] 🧑 **T-H11 设置页：同步页面**（🧑 你要的日志展示）
   放同步开关、WebDAV 账号、手动同步按钮，以及**上一次同步的分项报告**（内容见 T-E09）。不做主页常驻状态条。
 
-- [ ] **T-H12 Toast / Snackbar 组件**
-  Qt Quick Controls 没有原生 Toast，需要自己实现或引入组件库（**用现成的还是自建，写 UI 时再定**）。要点：圆角矩形叠在 `Overlay` 上、Material 3 的 `inverse-surface` 配色、**必须避让底部迷你播放条**（否则被盖住）、3 秒自动消失也可上滑关闭、多条排队不重叠、不抢焦点不挡点击。
+- [ ] **T-H12 Toast / Snackbar 组件（两端各一个）**
+  **Android**：`Snackbar`（Compose Material3）自带，套 Material 主题即可，不要自己画。
+  **Windows**：Qt Quick Controls 没有原生 Toast，需要自己实现或引入组件库（**用现成的还是自建，写 UI 时再定**）。要点：圆角矩形叠在 `Overlay` 上、Material 3 的 `inverse-surface` 配色、**必须避让底部迷你播放条**（否则被盖住）、3 秒自动消失也可上滑关闭、多条排队不重叠、不抢焦点不挡点击。
+  两端行为规格要一致（时长、可关方式、多条排队策略），实现各写各的。
   **建议与同步结果浮窗共用一套实现**（无变化＝compact 一行字，有变化＝expanded 带勾选列表），样式统一、代码只写一次。
 
+
+- [x] **T-H13 Android UI 技术栈：Jetpack Compose + Material 3**
+  2026-11-25 定案。选 Compose 而不是传统 XML View 的理由：状态驱动、和"数据层 → UI 状态"的模型天然契合、Material 3 是官方参考实现（深色模式、字体缩放几乎免费）。代价是 APK 多 1–2 MB、首次编译稍慢。
+  **硬性约束**：Android 15 起对 targetSdk 35 的应用强制 edge-to-edge（内容延伸到状态栏与手势条之下），SafeArea 不是可选项，必须从一开始按"沉浸式 + 安全区避让"设计。
+
+- [x] **T-H16 视觉规格：统一设计语言、底部导航、动态取色默认关**（🧑 你定的三条）
+  2026-11-25 定案，是 UI 层的宪法，写界面前先回来对一次。完整论证见 [ARCHITECTURE.md](ARCHITECTURE.md) §9。
+  **① 统一设计语言（方案 A）**：两端是同一个 App，不是"各自像本地应用"。Android 用 Material 3、Windows 用 Qt Quick 的 Material 风格向**同一份规格**对齐，不用 Fluent。理由：同产品同用户同数据 + 一个人维护，两套规格迟早分叉，后续返工比一开始就统一贵。代价是有意接受的——Windows 用户会觉得"不太像 Windows 程序"。唯一允许的平台差异是**交互惯例**（右键 vs 长按）与**窗口形态**（桌面多列/侧栏，手机单列），视觉语言必须一致。
+  **为什么不走"Windows 用 Fluent"**：Qt 6.8 起的 FluentWinUI3 风格仍在开发中，`StackView`/`SplitView`/`Drawer`/`SwipeView`/`TreeViewDelegate` 等**明确未支持、会回落 Fusion**（[Qt 文档](https://doc.qt.io/qt-6/qtquickcontrols-fluentwinui3.html)），而播放器必然要用前两个。那不是"WinUI3 风格的应用"，是"一半 WinUI3 一半 Fusion"的拼接界面。
+  **①-b 两条对 Windows 的让步**：a) 用 Material **Dense 变体**（`QT_QUICK_CONTROLS_MATERIAL_VARIANT=Dense`，Qt 官方建议桌面用 Dense）——同一套语言，密度按输入设备调（手机 48dp / 桌面 32dp 级）；b) **标题栏与窗口边框走原生**（Mica / 自定义标题栏），不纳入"视觉规格必须一致"的范围，因为它属于操作系统容器而非应用内视觉。
+  **② 导航**：手机用 Material 3 `NavigationBar`（四个入口：库/播放/搜索/设置，80dp），桌面改成左侧常驻侧栏，**信息架构相同、容器不同**，换设备不用重学。
+  **③ 动态取色（Material You）默认关闭**：主色随壁纸变不可接受（品牌色 + 专辑封面本身又是配色源）。设置项 `ui.dynamic_color`，`device` 作用域（壁纸是设备相关的）。开启后动态取色覆盖主色，但**强调色与语义色仍由我们控制**，避免"危险按钮变成绿色"。
+
+- [x] **T-H14 第三方依赖的取舍原则**
+  定案：**"用成熟方案做我不用重造的部分，把精力放在没人替我做的部分"**，而不是"什么都要找现成的"。判断标准、依赖清单（含许可证与"为什么不选别的"）、体积预算、引入新依赖的流程，全部在 [DEPENDENCIES.md](DEPENDENCIES.md)。
+  两条最容易踩的：①**uchardet 是三许可，必须显式取 LGPL-2.1+ 分支，不能取 MPL-1.1**（后者与 GPL-3.0 不相容）；②**FFmpeg 必须自编译成音频专用版**（2–3 MB vs 完整构建 134 MB），MSYS2 大包只能用于开发期。
+
+- [ ] 📐 **T-H15 FFmpeg 构建策略：开发期用大包，发布前换成自编译**
+  两次构建二选一，**不能同进程混用**（符号冲突、全局状态冲突）：CMake 用 `MP3_FFMPEG_ROOT` 切换，major 版本必须对齐。开发阶段先装 MSYS2 的 `mingw-w64-ucrt-x86_64-ffmpeg`，等 v0.1 出声后再自编译音频专用版（`--disable-everything --disable-gpl --disable-network --disable-encoders --disable-video --enable-small` + 音频解码器白名单）做 A/B 比对。Android 侧交叉编译留到 v0.4。
 ---
 
 ## I. 明确不做
@@ -820,4 +880,14 @@
 | 2026-11-24 | **汇总删除的入口定为长按/右键 + 二次确认**（T-D08）：排行榜行上不挂常驻删除按钮；操作跨设备生效，误触无法靠撤销挽回，因此必须确认。同时**把 `origin` 四值写清楚**（T-H02）：`user`/`play_next`/`context`/`shuffle` 分别对应"用户显式排、下一首播放、系统按原序补、洗牌生成"，并补上 `user` 与 `context` 的界线（顺序是谁决定的）、`play_next` 为何要插进中间、`shuffle` 关掉随机后怎么回退 |
 | 2026-11-24 | **排序键定案**（T-C08/T-C12）：删除 `artists.sort_name`（它在带变音符号时反而更差，`Björk` 被排到 B 区末尾），英文排序直接用 `name_norm`；中文排序改用自带 6763 字拼音表算出 `pinyin_key` 列，走覆盖索引 0.01 ms（自定义 collation 要 3.61 ms 且索引在未注册连接上会报错）。**必须逐字比较**——整串拼接会把 `李荣浩`/`林俊杰` 排反。多音字按第一读音固定。列现在进表结构，v0.3 才填值 |
 | 2026-11-24 | **不用 HLC，也不用单调钳制**：HLC 只能治单机回跳和因果链次序，治不了离线并发与增量水位漏行，却要付 16 字节时间戳、失去可读性、合并逻辑改造三项代价。改用「`last_cursor` = 从对端见过的最大的 `updated_at`」——实测手机慢 1 天离线写 3 条：用本机同步时刻当水位漏 0/3，用对端见过的最大 `updated_at` 拉到 3/3。唯一漏洞（同机时钟回跳）靠设置页「强制全量同步」按钮补救，不需要代码 |
-| 2026-11-24 | **智能列表推后到 v0.4+**（F 区整体）。设计保留：表结构里已有 `playlists.kind` + `smart_query`，且它是数据模型的测压点。同时定案两个原型里抓到的真问题：①时间算子必须 `within_days` 与 `before_days` 并存（`NOT before_days` 会因 `NULL` 三值逻辑把「从没听过」算进「最近听过」）；②`is_missing` 的反向映射必须集中一处并有单测（第一版写反，两个方向全颠倒） |
+| 2026-11-24 | **智能列表推后到 v0.5+**（F 区整体）。设计保留：表结构里已有 `playlists.kind` + `smart_query`，且它是数据模型的测压点。同时定案两个原型里抓到的真问题：①时间算子必须 `within_days` 与 `before_days` 并存（`NOT before_days` 会因 `NULL` 三值逻辑把「从没听过」算进「最近听过」）；②`is_missing` 的反向映射必须集中一处并有单测（第一版写反，两个方向全颠倒） |
+| 2026-11-25 | **输出模式扩成三档**（T-B15）：`Shared`/`Exclusive`/`BitPerfect`，分界线是"承诺什么"而非"谁更强"。`Exclusive` 不保证位精确；`BitPerfect` 协商失败必须报错、不许静默降级（否则用户以为在听直通而 OS 在重采样）。设置项 `audio.output_mode` 是 `device` 作用域 |
+| 2026-11-25 | **采样率优先于 gapless**（T-B16）：不同采样率连播时每次重开流（方案 A）。跨采样率边界无法 gapless、无法交叉淡化，这是有意接受的代价。另新增 Android USB DAC 位精确直通档（T-B17），标记「遥遥无期」——`MIXER_BEHAVIOR_BIT_PERFECT` 是可选设备特性，绝大多数手机没有，实测连 YouTube Music/Apple Music/Tidal 都没在用 |
+| 2026-11-25 | **Android 定为项目主线**。架构三层不分叉（Core 零平台假设、接口契约两端一致），App 层平台适配前移到 v0.4，构建与发布两套流水线。ROADMAP 里 Android 从 v0.5 提前到 v0.4，音质顺延为 v0.5，F 区智能列表顺延到 v0.5+。理由：Android 的坑全在平台集成层（SAF、前台服务、MediaSession），发现得越晚返工越贵 |
+| 2026-11-25 | **UI 技术栈改为两端各用原生栈**（T-H01，方案 B）：Windows = Qt 6 Quick/QML，Android = Kotlin + Jetpack Compose + Material 3，Core 一份共用。改主意的原因是体积——Qt for Android 最小包 27 MB、常规 App 装完约 92 MB，Kotlin + Compose 只有 12–18 MB，**差 5–8 倍**；且 Android 媒体生态用 Media3 几乎白送、用 Qt 要自己写 Java 层。代价明确：维护两套 UI 的一致性，靠一份集中设计规格 + "功能边界两端一致"约束。ARCHITECTURE §9 重写，ROADMAP 相应调整 |
+| 2026-11-25 | **Android UI 定为 Jetpack Compose + Material 3**（T-H13）。选 Compose 不选 XML View：状态驱动、与"数据层→UI 状态"契合、Material 3 是官方参考实现。硬约束：Android 15 起 targetSdk 35 强制 edge-to-edge，SafeArea 不可选。当时留的"两端设计语言"问题由 T-H16 当日定案 |
+| 2026-11-25 | **新增 `docs/DEPENDENCIES.md`**（T-H14/T-H15）：定"不重复造轮子"的判断标准（用成熟方案做我不用重造的部分、自己写决定产品为什么存在的部分）、依赖清单与许可证矩阵、体积预算、引入新依赖的五步流程。两条易踩的坑：uchardet 是三许可**必须取 LGPL 分支而非 MPL-1.1**（后者与 GPL-3.0 不相容）；FFmpeg 必须自编译成音频专用版（2–3 MB vs 完整构建 134 MB），MSYS2 大包只能开发期用 |
+| 2026-11-25 | **FFmpeg 构建策略**（T-H15）：大包与自编译是**两次构建二选一**，不能同进程混用（符号冲突），用 `MP3_FFMPEG_ROOT` 切换、major 版本必须对齐。开发期先装 MSYS2 大包，v0.1 出声后自编译做 A/B 比对；Android 交叉编译留到 v0.4 |
+| 2026-11-25 | **视觉规格三条定案**（T-H16）：①统一设计语言——两端是同一个 App，Windows 用 Qt 的 Material 风格向同一份规格对齐而不用 Fluent，代价是有意接受"不太像 Windows 程序"；②导航手机用底部 `NavigationBar`、桌面用左侧常驻侧栏，信息架构相同容器不同；③动态取色（Material You）**默认关闭**、设置里可开（`ui.dynamic_color`，`device` 作用域），开启后只覆盖主色、强调色与语义色仍由我们控制。Android 15 起 edge-to-edge 强制，SafeArea 不可选 |
+| 2026-11-25 | **为何不走"Windows 用 Fluent"**（T-H16 ① 补证）：查 Qt 6.12 文档确认 FluentWinUI3 风格（Qt 6.8 起）仍在开发中，`StackView`/`SplitView`/`Drawer`/`SwipeView`/`SwipeDelegate`/`TreeViewDelegate`/`Tumbler` 等明确未支持、会回落 Fusion；播放器必然用 `StackView` 与 `SplitView`，所以选 Fluent 等于做出一半 WinUI3 一半 Fusion 的拼接界面。同时补**两条对 Windows 的让步**：a) Windows 用 Material **Dense 变体**（密度按输入设备调，手机 48dp / 桌面 32dp 级）；b) **标题栏与窗口边框走原生**，不纳入视觉规格一致范围（属操作系统容器而非应用内视觉） |
+| 2026-11-25 | **DSD 方案定案**：Windows 走 DoP、Android 只转 PCM，原生 DSD 不做（[DEPENDENCIES.md](DEPENDENCIES.md) 与本条同源）。DSD 用户群极小、文件极大，不值得为它开一个大坑 |

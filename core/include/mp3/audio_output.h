@@ -25,13 +25,34 @@ namespace mp3 {
 enum class OutputMode : uint8_t {
     /// Mix through the OS mixer.  Always works, allows other apps to play at
     /// the same time, but the OS may resample and apply its own effects.
+    ///
+    /// The device is opened at the OS mix format, not at the source rate, so
+    /// this mode can never be bit-perfect -- and reopening the stream because
+    /// the next track has a different rate buys nothing, since the OS would
+    /// resample it anyway.
     Shared = 0,
 
     /// Take exclusive control of the device.  WASAPI exclusive mode on
-    /// Windows, AAudio MMAP exclusive on Android.  Bit-perfect when the
-    /// stream format matches the device format exactly.  Fails when another
+    /// Windows, AAudio MMAP exclusive on Android.  Fails when another
     /// application holds the device.
+    ///
+    /// Exclusive is not a promise of bit-perfect: the driver may still
+    /// convert the format internally and the OS volume may still be in the
+    /// path.
     Exclusive,
+
+    /// Exclusive access *and* a promise that nothing between us and the DAC
+    /// touches the samples: no software volume, no resampling, and the stream
+    /// format must equal the device's native format exactly.
+    ///
+    /// This is a request, not a hint.  If the backend cannot honour it,
+    /// open() MUST fail -- a silent fallback is worse than a refusal, because
+    /// the user would believe they are hearing an untouched signal while the
+    /// OS quietly resamples it.  On Android this maps to
+    /// setPreferredMixerAttributes() with MIXER_BEHAVIOR_BIT_PERFECT, which
+    /// is an optional device feature (Android 14+), so expect it to fail on
+    /// most phones and only work with some USB DACs.
+    BitPerfect,
 };
 
 /// Real-world description of an output device.
@@ -83,8 +104,17 @@ public:
     virtual std::vector<DeviceInfo> devices() const = 0;
 
     /// Open a device.  Empty id means "system default".
-    /// The requested format is honoured exactly or the call fails; there is no
-    /// silent resampling -- the mixer upstream is responsible for conforming.
+    ///
+    /// In `Shared` and `BitPerfect` modes the requested format is honoured
+    /// exactly or the call fails; there is no silent resampling -- the mixer
+    /// upstream is responsible for conforming.  `Exclusive` may fall back to
+    /// the device's own mix format, because in that mode we ask for control,
+    /// not for fidelity.
+    ///
+    /// Because `BitPerfect` cannot resample, a caller that wants every track
+    /// at its native rate must reopen the stream whenever the rate changes.
+    /// That is deliberate: the gap is short and a resampled track defeats the
+    /// entire purpose of the mode.
     virtual Status open(const std::string& device_id,
                         const AudioFormat& format,
                         OutputMode mode) = 0;
